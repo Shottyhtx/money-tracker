@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>QuickTracker</title>
+
+  <!-- PWA / iOS meta -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#f8fafc" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="description" content="QuickTracker — simple personal income & expense tracker" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica; } .no-tap-highlight { -webkit-tap-highlight-color: transparent; } </style>
+</head>
+<body class="bg-gray-50 text-gray-900 flex flex-col h-screen overflow-hidden">
+
+  <header class="bg-white p-6 pt-10 shadow-sm border-b">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-xs font-bold text-gray-500 uppercase tracking-widest">Net Balance</h1>
+        <div id="balance" class="text-4xl font-bold mt-1" aria-live="polite">€0.00</div>
+        <div class="flex gap-4 mt-4">
+          <div class="flex-1 bg-green-50 p-2 rounded" aria-live="polite">
+            <span class="text-[10px] text-green-600 font-bold uppercase">Income</span>
+            <div id="total-income" class="text-lg font-semibold text-green-700">€0.00</div>
+          </div>
+          <div class="flex-1 bg-red-50 p-2 rounded" aria-live="polite">
+            <span class="text-[10px] text-red-600 font-bold uppercase">Spending</span>
+            <div id="total-spending" class="text-lg font-semibold text-red-700">€0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <button id="export-btn" class="px-3 py-2 bg-blue-600 text-white rounded" title="Export data">Export</button>
+        <label for="import-file" class="px-3 py-2 bg-gray-100 rounded cursor-pointer text-sm text-gray-700 text-center">Import</label>
+        <input id="import-file" type="file" accept="application/json" class="hidden" />
+        <button id="clear-btn" class="px-3 py-2 bg-red-50 text-red-700 rounded text-sm">Clear all</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 p-6 overflow-y-auto pb-32">
+    <div class="space-y-4">
+      <div>
+        <label for="amount" class="block text-sm font-medium text-gray-700">Amount</label>
+        <input inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" type="number" id="amount" placeholder="0.00" step="0.01" min="0.01"
+               class="w-full text-3xl border-b-2 border-gray-200 focus:border-blue-500 outline-none py-2 bg-transparent" aria-label="Amount" />
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="setType('expense')" id="btn-expense" aria-pressed="true" class="py-3 rounded-xl font-bold border-2 border-red-500 bg-red-500 text-white transition-all">Expense</button>
+        <button onclick="setType('income')" id="btn-income" aria-pressed="false" class="py-3 rounded-xl font-bold border-2 border-green-500 text-green-500 bg-transparent transition-all">Income</button>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <button onclick="addEntry('Food')" class="p-3 bg-white border rounded-lg text-sm font-medium">Food</button>
+        <button onclick="addEntry('Transport')" class="p-3 bg-white border rounded-lg text-sm font-medium">Transp.</button>
+        <button onclick="addEntry('Home')" class="p-3 bg-white border rounded-lg text-sm font-medium">Home</button>
+        <button onclick="addEntry('Work')" class="p-3 bg-white border rounded-lg text-sm font-medium">Work</button>
+        <button onclick="addEntry('Fun')" class="p-3 bg-white border rounded-lg text-sm font-medium">Fun</button>
+        <button onclick="addEntry('Other')" class="p-3 bg-white border rounded-lg text-sm font-medium text-gray-400">...</button>
+      </div>
+    </div>
+
+    <div class="mt-8">
+      <h2 class="text-sm font-bold text-gray-400 uppercase mb-4">Recent</h2>
+      <div id="history" class="space-y-3" aria-live="polite"></div>
+      <div id="empty-state" class="text-sm text-gray-400 mt-4">No entries yet — add your first expense or income.</div>
+    </div>
+  </main>
+
+  <script>
+    // Configuration
+    const STORAGE_KEY = 'finance_data_v1';
+    const CURRENCY = 'EUR';
+    const currencyFormatter = new Intl.NumberFormat(undefined, { style: 'currency', currency: CURRENCY });
+
+    let currentType = 'expense';
+    let entries = loadEntries();
+
+    function centsFromFloat(value) { return Math.round(value * 100); }
+    function floatFromCents(cents) { return cents / 100; }
+
+    function loadEntries() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map(e => ({
+          id: e.id,
+          amount_cents: typeof e.amount_cents === 'number' ? e.amount_cents : (typeof e.amount === 'number' ? Math.round(e.amount * 100) : 0),
+          category: e.category || 'Other',
+          type: e.type === 'income' ? 'income' : 'expense',
+          date: e.date || new Date().toISOString()
+        }));
+      } catch (err) {
+        console.error('Failed to load entries', err);
+        return [];
+      }
+    }
+
+    function persist() { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); }
+
+    function setType(type) {
+      currentType = type;
+      const eBtn = document.getElementById('btn-expense');
+      const iBtn = document.getElementById('btn-income');
+      if (type === 'expense') {
+        eBtn.className = "py-3 rounded-xl font-bold border-2 border-red-500 bg-red-500 text-white";
+        eBtn.setAttribute('aria-pressed', 'true');
+        iBtn.className = "py-3 rounded-xl font-bold border-2 border-green-500 text-green-500 bg-transparent";
+        iBtn.setAttribute('aria-pressed', 'false');
+      } else {
+        iBtn.className = "py-3 rounded-xl font-bold border-2 border-green-500 bg-green-500 text-white";
+        iBtn.setAttribute('aria-pressed', 'true');
+        eBtn.className = "py-3 rounded-xl font-bold border-2 border-red-500 text-red-500 bg-transparent";
+        eBtn.setAttribute('aria-pressed', 'false');
+      }
+    }
+
+    function addEntry(category) {
+      const amountInput = document.getElementById('amount');
+      let rawVal = amountInput.value;
+      if (!rawVal) return;
+      rawVal = String(rawVal).replace(',', '.');
+      const amount = parseFloat(rawVal);
+      if (Number.isNaN(amount) || amount <= 0) {
+        amountInput.classList.add('ring', 'ring-red-300');
+        setTimeout(() => amountInput.classList.remove('ring', 'ring-red-300'), 800);
+        amountInput.focus();
+        return;
+      }
+
+      const entry = {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        amount_cents: centsFromFloat(amount),
+        category: category || 'Other',
+        type: currentType,
+        date: new Date().toISOString()
+      };
+
+      entries.unshift(entry);
+      persist();
+      amountInput.value = '';
+      updateUI();
+      amountInput.focus();
+    }
+
+    function deleteEntry(id) {
+      if (!confirm('Delete this entry?')) return;
+      entries = entries.filter(e => e.id !== id);
+      persist();
+      updateUI();
+    }
+
+    function clearAll() {
+      if (!confirm('Clear all entries? This cannot be undone.')) return;
+      entries = [];
+      persist();
+      updateUI();
+    }
+
+    function exportData() {
+      const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'spending-habits-export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function importFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (!Array.isArray(parsed)) throw new Error('Invalid format');
+          if (!confirm('Replace current data with imported data?')) return;
+          entries = parsed.map(e => ({
+            id: e.id || Date.now() + Math.floor(Math.random()*1000),
+            amount_cents: typeof e.amount_cents === 'number' ? e.amount_cents : (typeof e.amount === 'number' ? Math.round(e.amount * 100) : 0),
+            category: e.category || 'Other',
+            type: e.type === 'income' ? 'income' : 'expense',
+            date: e.date || new Date().toISOString()
+          }));
+          persist();
+          updateUI();
+        } catch (err) {
+          alert('Failed to import: invalid file.');
+          console.error(err);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function updateUI() {
+      const history = document.getElementById('history');
+      const balEl = document.getElementById('balance');
+      const incEl = document.getElementById('total-income');
+      const expEl = document.getElementById('total-spending');
+      const emptyState = document.getElementById('empty-state');
+
+      let totalIncCents = 0;
+      let totalExpCents = 0;
+
+      history.innerHTML = '';
+
+      if (entries.length === 0) {
+        emptyState.style.display = 'block';
+      } else {
+        emptyState.style.display = 'none';
+      }
+
+      entries.forEach(e => {
+        if (e.type === 'income') totalIncCents += e.amount_cents;
+        else totalExpCents += e.amount_cents;
+
+        const date = new Date(e.date);
+        const dateStr = date.toLocaleDateString();
+
+        const item = document.createElement('div');
+        item.className = 'flex justify-between items-center bg-white p-3 rounded-lg shadow-sm';
+
+        const left = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'font-bold';
+        title.textContent = e.category;
+        const sub = document.createElement('div');
+        sub.className = 'text-xs text-gray-400';
+        sub.textContent = dateStr;
+        left.appendChild(title);
+        left.appendChild(sub);
+
+        const right = document.createElement('div');
+        right.className = 'flex items-center gap-3';
+        const amountEl = document.createElement('div');
+        amountEl.className = 'font-bold ' + (e.type === 'income' ? 'text-green-600' : 'text-red-600');
+        const sign = e.type === 'income' ? '+' : '-';
+        amountEl.textContent = sign + currencyFormatter.format(floatFromCents(e.amount_cents)).replace(/[^0-9.,\s]/g, '').trim();
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'text-xs text-gray-400 px-2 py-1 rounded hover:bg-gray-100';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = () => deleteEntry(e.id);
+        delBtn.setAttribute('aria-label', `Delete entry ${e.category} ${dateStr}`);
+
+        right.appendChild(amountEl);
+        right.appendChild(delBtn);
+
+        item.appendChild(left);
+        item.appendChild(right);
+
+        history.appendChild(item);
+      });
+
+      const netCents = totalIncCents - totalExpCents;
+      balEl.innerText = currencyFormatter.format(floatFromCents(netCents));
+      incEl.innerText = currencyFormatter.format(floatFromCents(totalIncCents));
+      expEl.innerText = currencyFormatter.format(floatFromCents(totalExpCents));
+    }
+
+    document.getElementById('clear-btn').addEventListener('click', clearAll);
+    document.getElementById('export-btn').addEventListener('click', exportData);
+    document.getElementById('import-file').addEventListener('change', function (ev) {
+      const file = ev.target.files && ev.target.files[0];
+      if (file) importFile(file);
+      ev.target.value = '';
+    });
+
+    updateUI();
+
+    document.getElementById('amount').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        addEntry('Other');
+      }
+    });
+  </script>
+
+  <!-- Service worker registration (register at root for best scope) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('SW registered', reg.scope))
+          .catch(err => console.warn('SW registration failed', err));
+      });
+    }
+  </script>
+</body>
+</html>
